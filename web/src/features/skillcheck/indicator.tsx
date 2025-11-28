@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SkillCheckProps } from '../../typings';
-import { useInterval } from '@mantine/hooks';
 
 interface Props {
   angle: number;
@@ -11,28 +10,59 @@ interface Props {
   handleComplete: (success: boolean) => void;
 }
 
-const TICK_MS = 16; // ~60fps; real speed is controlled by time delta, not this value
+const BASE_DURATION_MS = 2000;
 
-const Indicator: React.FC<Props> = ({ angle, offset, multiplier, handleComplete, skillCheck, className }) => {
+const Indicator: React.FC<Props> = ({
+  angle,
+  offset,
+  multiplier,
+  handleComplete,
+  skillCheck,
+  className,
+}) => {
   const [indicatorAngle, setIndicatorAngle] = useState(-90);
   const [keyPressed, setKeyPressed] = useState<false | string>(false);
 
-  // Track last timestamp to compute time deltas
-  const lastTimeRef = useRef<number | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+  const completedRef = useRef(false);
 
-  const interval = useInterval(() => {
-    setIndicatorAngle((prev) => {
-      const now = performance.now();
-      const last = lastTimeRef.current ?? now;
-      const delta = now - last; // ms since last tick
+  const stopAnimation = () => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+  };
 
-      lastTimeRef.current = now;
+  const animate = useCallback(
+    (time: number) => {
+      if (completedRef.current) return;
 
-      // multiplier is now effectively "degrees per ms"
-      const next = prev + multiplier * delta;
-      return next;
-    });
-  }, TICK_MS);
+      if (startTimeRef.current === null) {
+        startTimeRef.current = time;
+      }
+
+      const elapsed = time - startTimeRef.current;
+
+      const speed = Math.max(multiplier || 0, 0.0001);
+      const duration = BASE_DURATION_MS / speed;
+
+      const progress = Math.min(elapsed / duration, 1);
+      const newAngle = -90 + progress * 360;
+
+      setIndicatorAngle(newAngle);
+
+      if (newAngle + 90 >= 360) {
+        completedRef.current = true;
+        stopAnimation();
+        handleComplete(false);
+        return;
+      }
+
+      rafIdRef.current = requestAnimationFrame(animate);
+    },
+    [multiplier, handleComplete]
+  );
 
   const keyHandler = useCallback(
     (e: KeyboardEvent) => {
@@ -42,63 +72,72 @@ const Indicator: React.FC<Props> = ({ angle, offset, multiplier, handleComplete,
 
       if (isNonLatin) {
         if (e.code.indexOf('Key') === 0 && e.code.length === 4) {
-          // i.e. 'KeyW'
           convKey = e.code.charAt(3);
         }
 
         if (e.code.indexOf('Digit') === 0 && e.code.length === 6) {
-          // i.e. 'Digit7'
           convKey = e.code.charAt(5);
         }
       }
 
       setKeyPressed(convKey.toLowerCase());
     },
-    [skillCheck] // keeps same semantics as original
+    [skillCheck]
   );
 
-  // Start / reset when skillCheck changes
+  // Start / reset animation whenever a new skillcheck starts
   useEffect(() => {
     setIndicatorAngle(-90);
-    lastTimeRef.current = performance.now();
+    startTimeRef.current = null;
+    completedRef.current = false;
 
     window.addEventListener('keydown', keyHandler);
-    interval.start();
+    rafIdRef.current = requestAnimationFrame(animate);
 
     return () => {
-      interval.stop();
+      stopAnimation();
       window.removeEventListener('keydown', keyHandler);
-      lastTimeRef.current = null;
+      startTimeRef.current = null;
+      completedRef.current = true;
     };
-  }, [skillCheck, keyHandler, interval]);
+  }, [skillCheck, keyHandler, animate]);
 
-  // Fail if we go past the end of the circle
   useEffect(() => {
-    if (indicatorAngle + 90 >= 360) {
-      interval.stop();
-      handleComplete(false);
-    }
-  }, [indicatorAngle, interval, handleComplete]);
-
-  // Handle key press + success/fail window
-  useEffect(() => {
-    if (!keyPressed) return;
+    if (!keyPressed || completedRef.current) return;
 
     if (skillCheck.keys && !skillCheck.keys?.includes(keyPressed)) return;
 
-    interval.stop();
+    stopAnimation();
     window.removeEventListener('keydown', keyHandler);
+    completedRef.current = true;
 
-    if (keyPressed !== skillCheck.key || indicatorAngle < angle || indicatorAngle > angle + offset) {
+    if (
+      keyPressed !== skillCheck.key ||
+      indicatorAngle < angle ||
+      indicatorAngle > angle + offset
+    ) {
       handleComplete(false);
     } else {
       handleComplete(true);
     }
 
     setKeyPressed(false);
-  }, [keyPressed, angle, offset, indicatorAngle, skillCheck, interval, keyHandler, handleComplete]);
+  }, [
+    keyPressed,
+    angle,
+    offset,
+    indicatorAngle,
+    skillCheck,
+    keyHandler,
+    handleComplete,
+  ]);
 
-  return <circle transform={`rotate(${indicatorAngle}, 250, 250)`} className={className} />;
+  return (
+    <circle
+      transform={`rotate(${indicatorAngle}, 250, 250)`}
+      className={className}
+    />
+  );
 };
 
 export default Indicator;
