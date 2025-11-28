@@ -55,7 +55,7 @@ const InputDialog: React.FC = () => {
                   : row.default && new Date(row.default).getTime()
                 : row.default
               : row.checked,
-        } || { value: null }
+        }
       );
       // Backwards compat with new Select data type
       if (row.type === 'select' || row.type === 'multi-select') {
